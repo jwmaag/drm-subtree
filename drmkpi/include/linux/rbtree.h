@@ -50,8 +50,8 @@ struct rb_root {
 };
 
 struct rb_root_cached {
-	struct  rb_root rb_root;
-	struct  rb_node *rb_node;
+	struct	rb_root rb_root;
+	struct	rb_node *rb_leftmost;
 };
 
 /*
@@ -62,6 +62,7 @@ int panic_cmp(struct rb_node *one, struct rb_node *two);
 RB_HEAD(drmcompat_root, rb_node);
 RB_PROTOTYPE(drmcompat_root, rb_node, __entry, panic_cmp);
 
+#define	rb_parent(r)	RB_PARENT(r, __entry)
 #define	rb_entry(ptr, type, member)	container_of(ptr, type, member)
 #define	rb_entry_safe(ptr, type, member) \
 	(ptr ? rb_entry(ptr, type, member) : NULL)
@@ -70,13 +71,12 @@ RB_PROTOTYPE(drmcompat_root, rb_node, __entry, panic_cmp);
 #define RB_EMPTY_NODE(node)     (RB_PARENT(node, __entry) == node)
 #define RB_CLEAR_NODE(node)     RB_SET_PARENT(node, node, __entry)
 
-#define	rb_insert_color(node, root)					\
-	drmcompat_root_RB_INSERT_COLOR((struct drmcompat_root *)(root), (node))
-#define	rb_insert_color_cached(node, root, leftmost)			\
-	drmcompat_root_RB_INSERT_COLOR((struct drmcompat_root *)(root), (node))
+#define	rb_insert_color(node, root) do {					\
+	if (rb_parent(node))							\
+		drmcompat_root_RB_INSERT_COLOR((struct drmcompat_root *)(root), \
+			rb_parent(node), (node));				\
+} while(0)
 #define	rb_erase(node, root)						\
-	drmcompat_root_RB_REMOVE((struct drmcompat_root *)(root), (node))
-#define	rb_erase_cached(node, root)					\
 	drmcompat_root_RB_REMOVE((struct drmcompat_root *)(root), (node))
 #define	rb_next(node)	RB_NEXT(drmcompat_root, NULL, (node))
 #define	rb_prev(node)	RB_PREV(drmcompat_root, NULL, (node))
@@ -106,13 +106,35 @@ rb_replace_node(struct rb_node *victim, struct rb_node *new,
 }
 
 static inline void
-rb_replace_node_cached(struct rb_node *victim, struct rb_node *new,
+rb_insert_color_cached(struct rb_node *node, struct rb_root_cached *root, bool leftmost)
+{
+	if (rb_parent(node))
+		drmcompat_root_RB_INSERT_COLOR((struct drmcompat_root *)&root->rb_root,
+				rb_parent(node), node);
+	if (leftmost)
+		root->rb_leftmost = node;
+}
+
+static inline struct rb_node *
+rb_erase_cached(struct rb_node *node, struct rb_root_cached *root)
+{
+	struct rb_node *retval;
+
+	if (node == root->rb_leftmost)
+		retval = root->rb_leftmost = drmcompat_root_RB_NEXT(node);
+	else
+		retval = NULL;
+	drmcompat_root_RB_REMOVE((struct drmcompat_root *)&root->rb_root, node);
+	return (retval);
+}
+
+static inline void
+rb_replace_node_cached(struct rb_node *old, struct rb_node *new,
   struct rb_root_cached *root)
 {
-
-	if (root->rb_node == victim)
-		root->rb_node = victim;
-	rb_replace_node(victim, new, &root->rb_root);
+	rb_replace_node(old, new, &root->rb_root);
+	if (root->rb_leftmost == old)
+		root->rb_leftmost = new;
 }
 
 #undef RB_ROOT
